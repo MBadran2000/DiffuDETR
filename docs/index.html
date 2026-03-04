@@ -1,0 +1,2092 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DiffuDETR: Rethinking Detection Transformers with Denoising Diffusion Process</title>
+    <meta name="description" content="DiffuDETR formulates object detection as a conditional query generation task using denoising diffusion, improving strong baselines on COCO, LVIS, and V3Det.">
+
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+
+    <!-- Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+
+    <!-- KaTeX -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
+    <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"
+        onload="renderMathInElement(document.body, {delimiters: [{left: '$$', right: '$$', display: true},{left: '$', right: '$', display: false}]});"></script>
+
+    <style>
+        :root {
+            --primary: #0F766E;
+            --primary-dark: #0D6560;
+            --primary-light: #14B8A6;
+            --accent: #B45309;
+            --accent-light: #D97706;
+            --bg: #FAFAF9;
+            --bg-warm: #F5F5F4;
+            --bg-card: #FFFFFF;
+            --bg-card-hover: #FAFAF9;
+            --text-primary: #1C1917;
+            --text-secondary: #57534E;
+            --text-muted: #A8A29E;
+            --border: #E7E5E4;
+            --border-hover: #D6D3D1;
+            --gradient-1: linear-gradient(135deg, #0F766E 0%, #0E7490 100%);
+            --gradient-2: linear-gradient(135deg, #1E6091 0%, #0E7490 100%);
+            --gradient-3: linear-gradient(135deg, #B45309 0%, #D97706 100%);
+            --shadow-sm: 0 1px 2px rgba(0,0,0,0.04);
+            --shadow-md: 0 4px 16px rgba(0,0,0,0.06);
+            --shadow-lg: 0 8px 30px rgba(0,0,0,0.08);
+            --shadow-hover: 0 12px 40px rgba(0,0,0,0.1);
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        html {
+            scroll-behavior: smooth;
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: var(--bg);
+            color: var(--text-primary);
+            line-height: 1.7;
+            overflow-x: hidden;
+        }
+
+        /* ====== SUBTLE BACKGROUND ====== */
+        .bg-particles {
+            display: none;
+        }
+
+        .bg-gradient-orbs {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 0;
+            pointer-events: none;
+            overflow: hidden;
+        }
+
+        .orb {
+            position: absolute;
+            border-radius: 50%;
+            filter: blur(120px);
+            opacity: 0.07;
+            animation: float 25s ease-in-out infinite;
+        }
+
+        .orb-1 {
+            width: 700px;
+            height: 700px;
+            background: #C7D2FE;
+            top: -300px;
+            left: -200px;
+            animation-delay: 0s;
+        }
+
+        .orb-2 {
+            width: 600px;
+            height: 600px;
+            background: #FECDD3;
+            top: 40%;
+            right: -250px;
+            animation-delay: -8s;
+        }
+
+        .orb-3 {
+            width: 500px;
+            height: 500px;
+            background: #DDD6FE;
+            bottom: -150px;
+            left: 25%;
+            animation-delay: -16s;
+        }
+
+        @keyframes float {
+            0%, 100% { transform: translate(0, 0) scale(1); }
+            25% { transform: translate(20px, -20px) scale(1.03); }
+            50% { transform: translate(-15px, 15px) scale(0.97); }
+            75% { transform: translate(10px, 10px) scale(1.01); }
+        }
+
+        /* ====== NAVIGATION ====== */
+        .navbar {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            z-index: 1000;
+            padding: 0.8rem 2rem;
+            background: rgba(250, 250, 249, 0.9);
+            backdrop-filter: blur(20px);
+            border-bottom: 1px solid var(--border);
+            transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        .navbar.scrolled {
+            background: rgba(250, 250, 249, 0.95);
+            backdrop-filter: blur(20px);
+            border-bottom: 1px solid var(--border);
+            box-shadow: var(--shadow-sm);
+        }
+
+        .navbar-inner {
+            max-width: 1200px;
+            margin: 0 auto;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .nav-brand {
+            font-weight: 800;
+            font-size: 1.3rem;
+            background: var(--gradient-1);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            letter-spacing: -0.5px;
+        }
+
+        .nav-links {
+            display: flex;
+            gap: 2rem;
+            list-style: none;
+        }
+
+        .nav-links a {
+            color: var(--text-secondary);
+            text-decoration: none;
+            font-size: 0.9rem;
+            font-weight: 500;
+            transition: color 0.3s;
+            position: relative;
+        }
+
+        .nav-links a::after {
+            content: '';
+            position: absolute;
+            bottom: -4px;
+            left: 0;
+            width: 0;
+            height: 2px;
+            background: var(--primary);
+            transition: width 0.3s;
+            border-radius: 1px;
+        }
+
+        .nav-links a:hover {
+            color: var(--text-primary);
+        }
+
+        .nav-links a:hover::after {
+            width: 100%;
+        }
+
+                /* ====== HERO SECTION ====== */
+        .hero {
+            position: relative;
+            z-index: 1;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+            padding: 120px 2rem 80px;
+            overflow: hidden;
+        }
+
+        .hero::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-image: url('figures/hero-animation.svg');
+            background-size: cover;
+            background-position: center;
+            opacity: 0.65;
+            z-index: -2;
+        }
+
+        .hero::after {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(to bottom, transparent 40%, var(--bg) 100%);
+            z-index: -1;
+        }
+
+        .hero-content {
+            max-width: 900px;
+        }
+
+        .conference-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.5rem 1.2rem;
+            background: rgba(79, 70, 229, 0.08);
+            border: 1px solid rgba(79, 70, 229, 0.2);
+            border-radius: 50px;
+            font-size: 0.85rem;
+            font-weight: 600;
+            color: var(--primary);
+            margin-bottom: 2rem;
+            animation: fadeInUp 0.8s ease-out;
+        }
+
+        .conference-badge i {
+            font-size: 0.8rem;
+        }
+
+        .hero h1 {
+            font-size: clamp(2.5rem, 5vw, 4rem);
+            font-weight: 900;
+            line-height: 1.1;
+            margin-bottom: 0.5rem;
+            animation: fadeInUp 0.8s ease-out 0.1s both;
+            letter-spacing: -1.5px;
+            color: var(--text-primary);
+        }
+
+        .hero h1 .gradient-text {
+            background: var(--gradient-1);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .hero .subtitle {
+            font-size: clamp(1.1rem, 2vw, 1.5rem);
+            color: var(--text-primary);
+            font-weight: 500;
+            margin-bottom: 2rem;
+            animation: fadeInUp 0.8s ease-out 0.2s both;
+            text-shadow: 0 1px 4px rgba(255,255,255,0.8);
+        }
+
+        .authors {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+            gap: 1.5rem;
+            margin-bottom: 1rem;
+            animation: fadeInUp 0.8s ease-out 0.3s both;
+        }
+
+        .author {
+            text-align: center;
+        }
+
+        .author-name {
+            font-weight: 600;
+            font-size: 1rem;
+            color: var(--text-primary);
+        }
+
+        .author-name .equal {
+            color: var(--accent);
+            font-size: 0.75rem;
+            vertical-align: super;
+        }
+
+        .affiliations {
+            text-align: center;
+            color: var(--text-primary);
+            font-size: 0.9rem;
+            font-weight: 500;
+            margin-bottom: 2.5rem;
+            animation: fadeInUp 0.8s ease-out 0.35s both;
+            line-height: 1.6;
+            text-shadow: 0 1px 4px rgba(255,255,255,0.8);
+        }
+
+        .hero-buttons {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+            gap: 1rem;
+            animation: fadeInUp 0.8s ease-out 0.4s both;
+        }
+
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.6rem;
+            padding: 0.85rem 1.8rem;
+            border-radius: 12px;
+            font-size: 0.95rem;
+            font-weight: 600;
+            text-decoration: none;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            cursor: pointer;
+            border: none;
+        }
+
+        .btn-primary {
+            background: var(--primary);
+            color: white;
+            box-shadow: 0 4px 14px rgba(79, 70, 229, 0.25);
+        }
+
+        .btn-primary:hover {
+            background: var(--primary-dark);
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(79, 70, 229, 0.35);
+        }
+
+        .btn-secondary {
+            background: var(--bg-card);
+            color: var(--text-primary);
+            border: 1px solid var(--border);
+            box-shadow: var(--shadow-sm);
+        }
+
+        .btn-secondary:hover {
+            background: var(--bg-warm);
+            border-color: var(--border-hover);
+            transform: translateY(-2px);
+            box-shadow: var(--shadow-md);
+        }
+
+        /* ====== SECTION STYLES ====== */
+        .section {
+            position: relative;
+            z-index: 1;
+            padding: 80px 2rem;
+        }
+
+        .section-inner {
+            max-width: 1000px;
+            margin: 0 auto;
+        }
+
+        .section-header {
+            text-align: center;
+            margin-bottom: 3rem;
+        }
+
+        .section-label {
+            display: inline-block;
+            font-size: 0.8rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 3px;
+            color: var(--primary);
+            margin-bottom: 0.8rem;
+        }
+
+        .section-title {
+            font-size: clamp(1.8rem, 3vw, 2.3rem);
+            font-weight: 800;
+            letter-spacing: -0.8px;
+            margin-bottom: 0.8rem;
+            color: var(--text-primary);
+        }
+
+        .section-subtitle {
+            font-size: 1.05rem;
+            color: var(--text-secondary);
+            max-width: 600px;
+            margin: 0 auto;
+        }
+
+        /* ====== ABSTRACT ====== */
+        .abstract-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 20px;
+            padding: 2.5rem;
+            position: relative;
+            overflow: hidden;
+            box-shadow: var(--shadow-sm);
+        }
+
+        .abstract-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 3px;
+            background: var(--gradient-1);
+        }
+
+        .abstract-card p {
+            font-size: 1.02rem;
+            line-height: 1.85;
+            color: var(--text-secondary);
+        }
+
+        .abstract-card .highlight {
+            color: var(--primary);
+            font-weight: 600;
+        }
+
+        .abstract-card .metric {
+            color: var(--accent);
+            font-weight: 700;
+        }
+
+        /* ====== KEY RESULTS CARDS ====== */
+        .results-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            gap: 1.2rem;
+            margin-top: 2rem;
+        }
+
+        .result-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 1.8rem;
+            text-align: center;
+            transition: all 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+            position: relative;
+            overflow: hidden;
+            box-shadow: var(--shadow-sm);
+        }
+
+        .result-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 50px;
+            height: 3px;
+            border-radius: 0 0 3px 3px;
+        }
+
+        .result-card:nth-child(1)::before { background: var(--gradient-1); }
+        .result-card:nth-child(2)::before { background: var(--gradient-2); }
+        .result-card:nth-child(3)::before { background: var(--gradient-3); }
+        .result-card:nth-child(4)::before { background: linear-gradient(135deg, #059669, #10B981); }
+
+        .result-card:hover {
+            transform: translateY(-6px);
+            box-shadow: var(--shadow-hover);
+            border-color: var(--border-hover);
+        }
+
+        .result-number {
+            font-size: 2.6rem;
+            font-weight: 900;
+            background: var(--gradient-1);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            line-height: 1;
+            margin-bottom: 0.3rem;
+        }
+
+        .result-card:nth-child(2) .result-number {
+            background: var(--gradient-2);
+            -webkit-background-clip: text;
+            background-clip: text;
+        }
+
+        .result-card:nth-child(3) .result-number {
+            background: var(--gradient-3);
+            -webkit-background-clip: text;
+            background-clip: text;
+        }
+
+        .result-card:nth-child(4) .result-number {
+            background: linear-gradient(135deg, #059669, #10B981);
+            -webkit-background-clip: text;
+            background-clip: text;
+        }
+
+        .result-delta {
+            font-size: 0.95rem;
+            font-weight: 700;
+            color: #059669;
+            margin-bottom: 0.4rem;
+        }
+
+        .result-label {
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+            font-weight: 500;
+        }
+
+        .result-dataset {
+            font-size: 0.72rem;
+            color: var(--text-muted);
+            margin-top: 0.3rem;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        /* ====== FRAMEWORK FIGURE ====== */
+        .figure-container {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            overflow: hidden;
+            transition: all 0.35s;
+            box-shadow: var(--shadow-sm);
+        }
+
+        .figure-container:hover {
+            box-shadow: var(--shadow-lg);
+            border-color: var(--border-hover);
+        }
+
+        .figure-container img {
+            width: 100%;
+            height: auto;
+            display: block;
+        }
+
+        .figure-caption {
+            padding: 1.2rem 1.8rem;
+            border-top: 1px solid var(--border);
+        }
+
+        .figure-caption h4 {
+            font-size: 0.95rem;
+            font-weight: 700;
+            margin-bottom: 0.4rem;
+            color: var(--text-primary);
+        }
+
+        .figure-caption p {
+            font-size: 0.88rem;
+            color: var(--text-secondary);
+            line-height: 1.6;
+        }
+
+        /* ====== METHOD SECTION ====== */
+        .method-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 1.5rem;
+            margin-top: 2.5rem;
+        }
+
+        .method-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 1.8rem;
+            transition: all 0.35s;
+            box-shadow: var(--shadow-sm);
+        }
+
+        .method-card:hover {
+            transform: translateY(-4px);
+            box-shadow: var(--shadow-lg);
+            border-color: var(--border-hover);
+        }
+
+        .method-icon {
+            width: 46px;
+            height: 46px;
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.2rem;
+            margin-bottom: 1rem;
+        }
+
+        .method-icon.purple {
+            background: rgba(15, 118, 110, 0.08);
+            color: var(--primary);
+        }
+
+        .method-icon.red {
+            background: rgba(180, 83, 9, 0.08);
+            color: var(--accent);
+        }
+
+        .method-icon.blue {
+            background: rgba(37, 99, 235, 0.08);
+            color: #2563EB;
+        }
+
+        .method-icon.green {
+            background: rgba(5, 150, 105, 0.08);
+            color: #059669;
+        }
+
+        .method-card h3 {
+            font-size: 1.05rem;
+            font-weight: 700;
+            margin-bottom: 0.6rem;
+            color: var(--text-primary);
+        }
+
+        .method-card p {
+            font-size: 0.9rem;
+            color: var(--text-secondary);
+            line-height: 1.7;
+        }
+
+        /* ====== EQUATION HIGHLIGHT ====== */
+        .equation-block {
+            background: rgba(79, 70, 229, 0.03);
+            border: 1px solid rgba(79, 70, 229, 0.12);
+            border-radius: 14px;
+            padding: 2rem;
+            margin: 2.5rem 0;
+            text-align: center;
+            overflow-x: auto;
+        }
+
+        .equation-block .eq-label {
+            font-size: 0.78rem;
+            color: var(--primary);
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            margin-bottom: 1rem;
+        }
+
+        /* ====== TABLES ====== */
+        .table-wrapper {
+            overflow-x: auto;
+            margin: 2rem 0;
+            border-radius: 14px;
+            border: 1px solid var(--border);
+            background: var(--bg-card);
+            box-shadow: var(--shadow-sm);
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.88rem;
+        }
+
+        thead {
+            background: var(--bg-warm);
+        }
+
+        th {
+            padding: 0.9rem 1.1rem;
+            text-align: left;
+            font-weight: 700;
+            font-size: 0.78rem;
+            text-transform: uppercase;
+            letter-spacing: 0.8px;
+            color: var(--text-secondary);
+            border-bottom: 1px solid var(--border);
+            white-space: nowrap;
+        }
+
+        td {
+            padding: 0.85rem 1.1rem;
+            border-bottom: 1px solid var(--border);
+            color: var(--text-secondary);
+            white-space: nowrap;
+        }
+
+        tr:last-child td {
+            border-bottom: none;
+        }
+
+        tr:hover td {
+            background: rgba(79, 70, 229, 0.02);
+        }
+
+        .row-highlight td {
+            background: rgba(79, 70, 229, 0.04) !important;
+            color: var(--text-primary);
+            font-weight: 600;
+        }
+
+        .row-highlight td:first-child {
+            color: var(--primary);
+        }
+
+        .table-title {
+            font-size: 1.05rem;
+            font-weight: 700;
+            margin-bottom: 0.4rem;
+            color: var(--text-primary);
+        }
+
+        .table-desc {
+            font-size: 0.88rem;
+            color: var(--text-muted);
+            margin-bottom: 1.5rem;
+        }
+
+        .improvement {
+            color: #059669;
+            font-weight: 700;
+        }
+
+        /* ====== FIGURE GALLERY ====== */
+        .gallery {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1.5rem;
+            margin-top: 2rem;
+        }
+
+        .gallery.single {
+            grid-template-columns: 1fr;
+        }
+
+        @media (max-width: 768px) {
+            .gallery {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        /* ====== CONTRIBUTIONS ====== */
+        .contributions-list {
+            list-style: none;
+            display: grid;
+            gap: 1rem;
+            margin-top: 1.5rem;
+        }
+
+        .contribution-item {
+            display: flex;
+            gap: 1rem;
+            align-items: flex-start;
+            padding: 1.3rem 1.5rem;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 14px;
+            transition: all 0.3s;
+            box-shadow: var(--shadow-sm);
+        }
+
+        .contribution-item:hover {
+            box-shadow: var(--shadow-md);
+            transform: translateX(4px);
+        }
+
+        .contribution-num {
+            flex-shrink: 0;
+            width: 34px;
+            height: 34px;
+            background: var(--primary);
+            border-radius: 9px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 800;
+            font-size: 0.82rem;
+            color: white;
+        }
+
+        .contribution-text h4 {
+            font-size: 0.98rem;
+            font-weight: 700;
+            margin-bottom: 0.25rem;
+            color: var(--text-primary);
+        }
+
+        .contribution-text p {
+            font-size: 0.88rem;
+            color: var(--text-secondary);
+        }
+
+        /* ====== TABS ====== */
+        .tabs {
+            display: flex;
+            gap: 0.5rem;
+            margin-bottom: 2rem;
+            flex-wrap: wrap;
+        }
+
+        .tab-btn {
+            padding: 0.65rem 1.4rem;
+            border-radius: 10px;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            color: var(--text-secondary);
+            font-weight: 600;
+            font-size: 0.88rem;
+            cursor: pointer;
+            transition: all 0.3s;
+            font-family: inherit;
+            box-shadow: var(--shadow-sm);
+        }
+
+        .tab-btn.active {
+            background: var(--primary);
+            border-color: var(--primary);
+            color: white;
+            box-shadow: 0 2px 8px rgba(79, 70, 229, 0.2);
+        }
+
+        .tab-btn:hover:not(.active) {
+            border-color: var(--border-hover);
+            color: var(--text-primary);
+            background: var(--bg-warm);
+        }
+
+        .tab-content {
+            display: none;
+        }
+
+        .tab-content.active {
+            display: block;
+            animation: fadeIn 0.4s ease-out;
+        }
+
+        /* ====== INTERACTIVE COMPARISON ====== */
+        .comparison-viewer {
+            position: relative;
+            border-radius: 16px;
+            overflow: hidden;
+            border: 1px solid var(--border);
+            background: var(--bg-card);
+        }
+
+        .comparison-viewer img {
+            width: 100%;
+            display: block;
+        }
+
+        /* ====== ABLATION CHARTS ====== */
+        .ablation-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(270px, 1fr));
+            gap: 1.2rem;
+            margin-top: 2rem;
+        }
+
+        .ablation-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 1.6rem;
+            transition: all 0.3s;
+            box-shadow: var(--shadow-sm);
+        }
+
+        .ablation-card:hover {
+            box-shadow: var(--shadow-lg);
+            border-color: var(--border-hover);
+        }
+
+        .ablation-card h4 {
+            font-size: 0.92rem;
+            font-weight: 700;
+            margin-bottom: 0.35rem;
+            color: var(--text-primary);
+        }
+
+        .ablation-metric {
+            font-size: 0.72rem;
+            font-weight: 600;
+            color: var(--primary);
+            background: rgba(15, 118, 110, 0.08);
+            display: inline-block;
+            padding: 0.15rem 0.55rem;
+            border-radius: 6px;
+            margin-bottom: 1rem;
+            letter-spacing: 0.02em;
+        }
+
+        .bar-chart {
+            display: flex;
+            flex-direction: column;
+            gap: 0.7rem;
+        }
+
+        .bar-item {
+            display: flex;
+            align-items: center;
+            gap: 0.7rem;
+        }
+
+        .bar-label {
+            font-size: 0.78rem;
+            font-weight: 500;
+            color: var(--text-secondary);
+            min-width: 75px;
+            text-align: right;
+        }
+
+        .bar-track {
+            flex: 1;
+            height: 26px;
+            background: var(--bg-warm);
+            border-radius: 7px;
+            overflow: hidden;
+            position: relative;
+        }
+
+        .bar-fill {
+            height: 100%;
+            border-radius: 7px;
+            display: flex;
+            align-items: center;
+            justify-content: flex-end;
+            padding-right: 10px;
+            font-size: 0.73rem;
+            font-weight: 700;
+            color: white;
+            transition: width 1s cubic-bezier(0.4, 0, 0.2, 1);
+            min-width: fit-content;
+        }
+
+        .bar-fill.purple { background: var(--gradient-1); }
+        .bar-fill.blue { background: var(--gradient-2); }
+        .bar-fill.pink { background: linear-gradient(135deg, #0891B2 0%, #22D3EE 100%); }
+        .bar-fill.green { background: linear-gradient(135deg, #059669, #10B981); }
+        .bar-fill.best { box-shadow: 0 0 10px rgba(15, 118, 110, 0.3); }
+
+        /* ====== BIBTEX ====== */
+        .bibtex-block {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 14px;
+            overflow: hidden;
+            box-shadow: var(--shadow-sm);
+        }
+
+        .bibtex-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0.9rem 1.4rem;
+            background: var(--bg-warm);
+            border-bottom: 1px solid var(--border);
+        }
+
+        .bibtex-header span {
+            font-size: 0.84rem;
+            font-weight: 600;
+            color: var(--primary);
+        }
+
+        .copy-btn {
+            background: var(--primary);
+            border: none;
+            color: white;
+            padding: 0.4rem 1rem;
+            border-radius: 8px;
+            font-size: 0.78rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+            font-family: inherit;
+        }
+
+        .copy-btn:hover {
+            background: var(--primary-dark);
+        }
+
+        .bibtex-code {
+            padding: 1.3rem;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.8rem;
+            line-height: 1.6;
+            color: var(--text-secondary);
+            overflow-x: auto;
+            white-space: pre;
+            background: var(--bg-card);
+        }
+
+        /* ====== FOOTER ====== */
+        .footer {
+            position: relative;
+            z-index: 1;
+            text-align: center;
+            padding: 2.5rem 2rem;
+            border-top: 1px solid var(--border);
+            color: var(--text-muted);
+            font-size: 0.85rem;
+        }
+
+        .footer a {
+            color: var(--primary);
+            text-decoration: none;
+        }
+
+        .footer a:hover {
+            text-decoration: underline;
+        }
+
+        /* ====== ANIMATIONS ====== */
+        @keyframes fadeInUp {
+            from {
+                opacity: 0;
+                transform: translateY(24px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+
+        .animate-on-scroll {
+            opacity: 0;
+            transform: translateY(24px);
+            transition: all 0.7s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        .animate-on-scroll.visible {
+            opacity: 1;
+            transform: translateY(0);
+        }
+
+        /* ====== DIVIDER ====== */
+        .divider {
+            height: 1px;
+            background: linear-gradient(90deg, transparent, var(--border), transparent);
+            margin: 0 auto;
+            max-width: 500px;
+        }
+
+        /* ====== RESPONSIVE ====== */
+        @media (max-width: 768px) {
+            .nav-links {
+                display: none;
+            }
+            
+            .section {
+                padding: 50px 1.2rem;
+            }
+
+            .abstract-card {
+                padding: 1.8rem 1.3rem;
+            }
+
+            .hero {
+                padding: 100px 1.2rem 60px;
+            }
+
+            .authors {
+                gap: 1rem;
+            }
+
+            .hero-buttons {
+                flex-direction: column;
+                align-items: center;
+            }
+
+            .method-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .results-grid {
+                grid-template-columns: 1fr 1fr;
+            }
+        }
+
+        /* ====== PIPELINE ANIMATION ====== */
+        .pipeline-flow {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0;
+            margin: 2.5rem 0;
+            flex-wrap: wrap;
+        }
+
+        .pipeline-step {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 1rem 1.3rem;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 14px;
+            transition: all 0.3s;
+            min-width: 115px;
+            box-shadow: var(--shadow-sm);
+        }
+
+        .pipeline-step:hover {
+            border-color: var(--primary);
+            transform: translateY(-3px);
+            box-shadow: var(--shadow-md);
+        }
+
+        .pipeline-step .step-icon {
+            font-size: 1.4rem;
+            color: var(--text-secondary);
+        }
+
+        .pipeline-step .step-label {
+            font-size: 0.76rem;
+            font-weight: 600;
+            color: var(--text-secondary);
+            text-align: center;
+        }
+
+        .pipeline-arrow {
+            font-size: 1.1rem;
+            color: var(--text-muted);
+            padding: 0 0.25rem;
+        }
+
+        @media (max-width: 768px) {
+            .pipeline-flow {
+                flex-direction: column;
+            }
+            .pipeline-arrow {
+                transform: rotate(90deg);
+            }
+        }
+
+        /* ====== SCROLLBAR ====== */
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: var(--bg);
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: var(--border-hover);
+            border-radius: 4px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: var(--text-muted);
+        }
+
+        /* ====== NUMBER COUNTER ANIMATION ====== */
+        .counter {
+            display: inline-block;
+        }
+    </style>
+</head>
+<body>
+
+<!-- Animated Background -->
+<div class="bg-gradient-orbs">
+    <div class="orb orb-1"></div>
+    <div class="orb orb-2"></div>
+    <div class="orb orb-3"></div>
+</div>
+
+<!-- Navigation -->
+<nav class="navbar" id="navbar">
+    <div class="navbar-inner">
+        <div class="nav-brand">DiffuDETR</div>
+        <ul class="nav-links">
+            <li><a href="#abstract">Abstract</a></li>
+            <li><a href="#method">Method</a></li>
+            <li><a href="#results">Results</a></li>
+            <li><a href="#qualitative">Visualizations</a></li>
+            <li><a href="#ablation">Ablations</a></li>
+            <li><a href="#citation">Citation</a></li>
+        </ul>
+    </div>
+</nav>
+
+<!-- Hero Section -->
+<section class="hero">
+    <div class="hero-content">
+        <div class="conference-badge">
+            <i class="fas fa-award"></i>
+            ICLR 2026
+        </div>
+        <h1>
+            <span class="gradient-text">DiffuDETR</span>
+        </h1>
+        <p class="subtitle">Rethinking Detection Transformers with Denoising Diffusion Process</p>
+        
+        <div class="authors">
+            <div class="author">
+                <div class="author-name">Youssef Nawar<span class="equal">*</span></div>
+            </div>
+            <div class="author">
+                <div class="author-name">Mohamed Badran<span class="equal">*</span></div>
+            </div>
+            <div class="author">
+                <div class="author-name">Marwan Torki</div>
+            </div>
+        </div>
+        <div class="affiliations">
+            Alexandria University &nbsp;·&nbsp; Technical University of Munich &nbsp;·&nbsp; Applied Innovation Center<br>
+            <span style="font-size:0.78rem; color: var(--text-secondary); font-weight: 500;"><span style="color: var(--accent);">*</span> Equal Contribution</span>
+        </div>
+
+        <div class="hero-buttons">
+            <a href="https://iclr.cc/virtual/2026/poster/10007459" class="btn btn-primary" target="_blank">
+                <i class="fas fa-file-pdf"></i> Paper
+            </a>
+            <a href="https://github.com/MBadran2000/DiffuDETR" class="btn btn-secondary" target="_blank">
+                <i class="fab fa-github"></i> Code
+            </a>
+            <a href="https://huggingface.co/MBadran/DiffuDETR/tree/main/checkpoints" class="btn btn-secondary" target="_blank">
+                <i class="fas fa-cube"></i> Checkpoints
+            </a>
+            <a href="#results" class="btn btn-secondary">
+                <i class="fas fa-chart-bar"></i> Results
+            </a>
+        </div>
+    </div>
+</section>
+
+<!-- Key Results -->
+<section class="section" style="padding-top: 20px;">
+    <div class="section-inner">
+        <div class="results-grid">
+            <div class="result-card animate-on-scroll">
+                <div class="result-number counter" data-target="51.9">0</div>
+                <div class="result-delta">+1.0 AP over DINO</div>
+                <div class="result-label">mAP on COCO val2017</div>
+                <div class="result-dataset">ResNet-50 Backbone</div>
+            </div>
+            <div class="result-card animate-on-scroll">
+                <div class="result-number counter" data-target="28.9">0</div>
+                <div class="result-delta">+2.4 AP over DINO</div>
+                <div class="result-label">AP on LVIS val</div>
+                <div class="result-dataset">ResNet-50 Backbone</div>
+            </div>
+            <div class="result-card animate-on-scroll">
+                <div class="result-number counter" data-target="50.3">0</div>
+                <div class="result-delta">+8.3 AP over DINO</div>
+                <div class="result-label">AP on V3Det val</div>
+                <div class="result-dataset">Swin-B Backbone</div>
+            </div>
+            <div class="result-card animate-on-scroll">
+                <div class="result-number">3×</div>
+                <div class="result-delta">Decoder-Only Passes</div>
+                <div class="result-label">Efficient Inference</div>
+                <div class="result-dataset">Only ~17% Extra FLOPs</div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- Abstract -->
+<section class="section" id="abstract">
+    <div class="section-inner">
+        <div class="section-header">
+            <div class="section-label">Overview</div>
+            <h2 class="section-title">Abstract</h2>
+        </div>
+        <div class="abstract-card animate-on-scroll">
+            <p>
+                We present <span class="highlight">DiffuDETR</span>, a novel approach that formulates object detection as a 
+                <span class="highlight">conditional object query generation task</span>, conditioned on the image and a set of noisy reference points. 
+                We integrate DETR-based models with denoising diffusion training to generate object queries' reference points from a 
+                prior Gaussian distribution. We propose two variants: <span class="highlight">DiffuDETR</span>, built on top of the 
+                Deformable DETR decoder, and <span class="highlight">DiffuDINO</span>, based on DINO's decoder with contrastive denoising queries.
+                To improve inference efficiency, we further introduce a lightweight sampling scheme that requires only multiple forward 
+                passes through the decoder.
+            </p>
+            <br>
+            <p>
+                Our method demonstrates consistent improvements across multiple backbones and datasets, including COCO 2017, LVIS, 
+                and V3Det, surpassing the performance of their respective baselines, with notable gains in complex and crowded scenes. 
+                Using ResNet-50 backbone we observe a <span class="metric">+1.0 mAP</span> on COCO, reaching 
+                <span class="metric">51.9 mAP</span> on DiffuDINO compared to 50.9 mAP of DINO. We also observe similar 
+                improvements on LVIS and V3Det with <span class="metric">+2.4</span> and <span class="metric">+2.2</span> respectively.
+            </p>
+        </div>
+    </div>
+</section>
+
+<div class="divider"></div>
+
+<!-- Contributions -->
+<section class="section" id="contributions">
+    <div class="section-inner">
+        <div class="section-header">
+            <div class="section-label">Highlights</div>
+            <h2 class="section-title">Key Contributions</h2>
+        </div>
+        <ul class="contributions-list">
+            <li class="contribution-item animate-on-scroll">
+                <div class="contribution-num">1</div>
+                <div class="contribution-text">
+                    <h4>Diffusion-Based Query Generation</h4>
+                    <p>We reformulate object detection in DETR as a denoising diffusion process, progressively denoising queries' reference points from Gaussian noise to precise object locations.</p>
+                </div>
+            </li>
+            <li class="contribution-item animate-on-scroll">
+                <div class="contribution-num">2</div>
+                <div class="contribution-text">
+                    <h4>Two Powerful Variants</h4>
+                    <p>We introduce DiffuDETR (built on Deformable DETR) and DiffuDINO (built on DINO with contrastive denoising queries), demonstrating the generality of our approach.</p>
+                </div>
+            </li>
+            <li class="contribution-item animate-on-scroll">
+                <div class="contribution-num">3</div>
+                <div class="contribution-text">
+                    <h4>Extensive Evaluation & Ablations</h4>
+                    <p>Comprehensive experiments on COCO 2017, LVIS, and V3Det across multiple backbones with thorough ablation studies on noise distributions, schedulers, decoder evaluations, and multi-seed robustness.</p>
+                </div>
+            </li>
+        </ul>
+    </div>
+</section>
+
+<div class="divider"></div>
+
+<!-- Method -->
+<section class="section" id="method">
+    <div class="section-inner">
+        <div class="section-header">
+            <div class="section-label">Approach</div>
+            <h2 class="section-title">Method Overview</h2>
+            <p class="section-subtitle">Integrating denoising diffusion into DETR-based object detection transformers.</p>
+        </div>
+
+        <!-- Pipeline Flow -->
+        <div class="pipeline-flow animate-on-scroll">
+            <div class="pipeline-step">
+                <div class="step-icon"><i class="fas fa-image"></i></div>
+                <div class="step-label">Input Image</div>
+            </div>
+            <div class="pipeline-arrow"><i class="fas fa-arrow-right"></i></div>
+            <div class="pipeline-step">
+                <div class="step-icon"><i class="fas fa-cubes"></i></div>
+                <div class="step-label">Backbone<br>(ResNet/Swin)</div>
+            </div>
+            <div class="pipeline-arrow"><i class="fas fa-arrow-right"></i></div>
+            <div class="pipeline-step">
+                <div class="step-icon"><i class="fas fa-exchange-alt"></i></div>
+                <div class="step-label">Transformer<br>Encoder</div>
+            </div>
+            <div class="pipeline-arrow"><i class="fas fa-arrow-right"></i></div>
+            <div class="pipeline-step" style="border-color: var(--primary); background: rgba(15, 118, 110, 0.04);">
+                <div class="step-icon"><i class="fas fa-crosshairs"></i></div>
+                <div class="step-label" style="color: var(--primary);">Diffusion<br>Decoder</div>
+            </div>
+            <div class="pipeline-arrow"><i class="fas fa-arrow-right"></i></div>
+            <div class="pipeline-step">
+                <div class="step-icon"><i class="fas fa-vector-square"></i></div>
+                <div class="step-label">Detection<br>Output</div>
+            </div>
+        </div>
+
+        <!-- Framework Figure -->
+        <div class="figure-container animate-on-scroll" style="margin-bottom: 3rem;">
+            <img src="figures/framework.png" alt="DiffuDETR Framework Overview">
+            <div class="figure-caption">
+                <h4><i class="fas fa-diagram-project" style="color: var(--primary);"></i> &nbsp;DiffuDETR Framework</h4>
+                <p>Overview of the DiffuDETR architecture. The model extracts multi-scale features via a backbone and transformer encoder, then uses noisy reference points (generated from Gaussian noise) along with learnable content queries to produce detections through an iterative diffusion-denoising process in the decoder.</p>
+            </div>
+        </div>
+
+        <!-- Method Cards -->
+        <div class="method-grid">
+            <div class="method-card animate-on-scroll">
+                <div class="method-icon purple"><i class="fas fa-wave-square"></i></div>
+                <h3>Forward Diffusion</h3>
+                <p>During training, ground-truth bounding box coordinates are corrupted with Gaussian noise at a random timestep $t \sim U(0, 100)$, creating noisy reference points $r_t$ via a cosine noise schedule with only 100 timesteps.</p>
+            </div>
+            <div class="method-card animate-on-scroll">
+                <div class="method-icon red"><i class="fas fa-rotate-left"></i></div>
+                <h3>Reverse Denoising</h3>
+                <p>At inference, reference points start as pure Gaussian noise and are iteratively denoised using DDIM sampling. The decoder predicts noise residuals conditioned on image features, requiring only 3 forward passes.</p>
+            </div>
+            <div class="method-card animate-on-scroll">
+                <div class="method-icon blue"><i class="fas fa-layer-group"></i></div>
+                <h3>Timestep-Conditioned Decoder</h3>
+                <p>The decoder integrates timestep embeddings after self-attention, conditioning each layer on the current diffusion step: $q_n = \text{FFN}(\text{MSDA}(\text{SA}(q_{n-1}) + t), r_t, O_{\text{enc}})$</p>
+            </div>
+            <div class="method-card animate-on-scroll">
+                <div class="method-icon green"><i class="fas fa-bolt"></i></div>
+                <h3>Efficient Inference</h3>
+                <p>Only the lightweight decoder is run multiple times—backbone and encoder execute once. With 3 decoder evaluations, the overhead is just ~17% extra FLOPs while achieving optimal performance.</p>
+            </div>
+        </div>
+
+        <!-- Decoder Architecture -->
+        <div class="figure-container animate-on-scroll" style="margin-top: 3rem;">
+            <img src="figures/decoder-arch.png" alt="DiffuDETR Decoder Architecture" style="padding: 1rem; background: #FAFAF9;">
+            <div class="figure-caption">
+                <h4><i class="fas fa-microchip" style="color: var(--accent);"></i> &nbsp;Decoder Architecture</h4>
+                <p>Detailed decoder layer design showing how timestep embeddings are injected after self-attention, followed by multi-scale deformable cross-attention with noisy reference points attending to encoded image features.</p>
+            </div>
+        </div>
+
+        <!-- Key Equation -->
+        <div class="equation-block animate-on-scroll">
+            <div class="eq-label">DDIM Sampling Update Rule</div>
+            <p style="font-size: 1.1rem;">
+                $$r_{t-1} = \frac{\sqrt{\bar{\alpha}_{t-1}}}{\sqrt{\bar{\alpha}_t}} \cdot r_t + \left(\sqrt{1 - \bar{\alpha}_{t-1}} - \frac{\sqrt{\bar{\alpha}_{t-1}} \cdot \sqrt{1 - \bar{\alpha}_t}}{\sqrt{\bar{\alpha}_t}}\right) \cdot \hat{\epsilon}_\theta(r_t, t)$$
+            </p>
+        </div>
+    </div>
+</section>
+
+<div class="divider"></div>
+
+<!-- Results -->
+<section class="section" id="results">
+    <div class="section-inner">
+        <div class="section-header">
+            <div class="section-label">Experiments</div>
+            <h2 class="section-title">Main Results</h2>
+            <p class="section-subtitle">Consistent improvements across three challenging benchmarks and multiple backbones.</p>
+        </div>
+
+        <!-- Convergence Figure -->
+        <div class="figure-container animate-on-scroll" style="margin-bottom: 3rem;">
+            <img src="figures/Converage-Comparsion.png" alt="Convergence Comparison" style="padding: 1rem; background: #FAFAF9;">
+            <div class="figure-caption">
+                <h4><i class="fas fa-chart-line" style="color: #059669;"></i> &nbsp;Training Convergence</h4>
+                <p>COCO val2017 AP (%) vs. training epochs for DiffuDINO, DiffuDETR, and various baselines including DINO, DN-DETR, DiffusionDet, Deformable-DETR, and more. DiffuDINO converges to the highest AP, surpassing all baseline methods.</p>
+            </div>
+        </div>
+
+        <!-- Dataset Tabs -->
+        <div class="tabs">
+            <button class="tab-btn active" data-tab="coco">COCO 2017</button>
+            <button class="tab-btn" data-tab="lvis">LVIS</button>
+            <button class="tab-btn" data-tab="v3det">V3Det</button>
+        </div>
+
+        <!-- COCO Tab -->
+        <div class="tab-content active" id="tab-coco">
+            <h3 class="table-title">COCO 2017 val — Object Detection Results</h3>
+            <p class="table-desc">Comparison with different methods on COCO 2017 validation set.</p>
+            <div class="table-wrapper">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Model</th>
+                            <th>Backbone</th>
+                            <th>Epochs</th>
+                            <th>AP</th>
+                            <th>AP₅₀</th>
+                            <th>AP₇₅</th>
+                            <th>APₛ</th>
+                            <th>APₘ</th>
+                            <th>APₗ</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>Pix2Seq</td>
+                            <td>R50</td>
+                            <td>300</td>
+                            <td>43.2</td>
+                            <td>61.0</td>
+                            <td>46.1</td>
+                            <td>26.6</td>
+                            <td>47.0</td>
+                            <td>58.6</td>
+                        </tr>
+                        <tr>
+                            <td>DiffusionDet</td>
+                            <td>R50</td>
+                            <td>—</td>
+                            <td>46.8</td>
+                            <td>65.3</td>
+                            <td>51.8</td>
+                            <td>29.6</td>
+                            <td>49.3</td>
+                            <td>62.2</td>
+                        </tr>
+                        <tr>
+                            <td>Deformable DETR</td>
+                            <td>R50</td>
+                            <td>50</td>
+                            <td>48.2</td>
+                            <td>67.0</td>
+                            <td>52.2</td>
+                            <td>30.7</td>
+                            <td>51.4</td>
+                            <td>63.0</td>
+                        </tr>
+                        <tr>
+                            <td>Align-DETR</td>
+                            <td>R50</td>
+                            <td>24</td>
+                            <td>51.4</td>
+                            <td>69.1</td>
+                            <td>55.8</td>
+                            <td>35.5</td>
+                            <td>54.6</td>
+                            <td>65.7</td>
+                        </tr>
+                        <tr>
+                            <td>DINO</td>
+                            <td>R50</td>
+                            <td>36</td>
+                            <td>50.9</td>
+                            <td>69.0</td>
+                            <td>55.3</td>
+                            <td>34.6</td>
+                            <td>54.1</td>
+                            <td>64.6</td>
+                        </tr>
+                        <tr class="row-highlight">
+                            <td>DiffuDETR (Ours)</td>
+                            <td>R50</td>
+                            <td>50</td>
+                            <td>50.2 <span class="improvement">(+2.0)</span></td>
+                            <td>66.8</td>
+                            <td>55.2</td>
+                            <td>33.3</td>
+                            <td>53.9</td>
+                            <td>65.8</td>
+                        </tr>
+                        <tr class="row-highlight">
+                            <td>DiffuAlignDETR (Ours)</td>
+                            <td>R50</td>
+                            <td>24</td>
+                            <td>51.9 <span class="improvement">(+0.5)</span></td>
+                            <td>69.2</td>
+                            <td>56.4</td>
+                            <td>34.9</td>
+                            <td>55.6</td>
+                            <td>66.2</td>
+                        </tr>
+                        <tr class="row-highlight">
+                            <td>DiffuDINO (Ours)</td>
+                            <td>R50</td>
+                            <td>50</td>
+                            <td>51.9 <span class="improvement">(+1.0)</span></td>
+                            <td>69.4</td>
+                            <td>55.7</td>
+                            <td>35.8</td>
+                            <td>55.7</td>
+                            <td>67.1</td>
+                        </tr>
+                        <tr>
+                            <td>Pix2Seq</td>
+                            <td>R101</td>
+                            <td>300</td>
+                            <td>44.5</td>
+                            <td>62.8</td>
+                            <td>47.5</td>
+                            <td>26.0</td>
+                            <td>48.2</td>
+                            <td>60.3</td>
+                        </tr>
+                        <tr>
+                            <td>DiffusionDet</td>
+                            <td>R101</td>
+                            <td>—</td>
+                            <td>47.5</td>
+                            <td>65.7</td>
+                            <td>52.0</td>
+                            <td>30.8</td>
+                            <td>50.4</td>
+                            <td>63.1</td>
+                        </tr>
+                        <tr>
+                            <td>Align-DETR</td>
+                            <td>R101</td>
+                            <td>12</td>
+                            <td>51.2</td>
+                            <td>68.8</td>
+                            <td>55.7</td>
+                            <td>32.9</td>
+                            <td>55.1</td>
+                            <td>66.6</td>
+                        </tr>
+                        <tr>
+                            <td>DINO</td>
+                            <td>R101</td>
+                            <td>12</td>
+                            <td>50.0</td>
+                            <td>67.7</td>
+                            <td>54.4</td>
+                            <td>32.2</td>
+                            <td>53.4</td>
+                            <td>64.3</td>
+                        </tr>
+                        <tr class="row-highlight">
+                            <td>DiffuAlignDETR (Ours)</td>
+                            <td>R101</td>
+                            <td>12</td>
+                            <td>51.7 <span class="improvement">(+0.5)</span></td>
+                            <td>69.3</td>
+                            <td>56.1</td>
+                            <td>34.0</td>
+                            <td>55.6</td>
+                            <td>67.0</td>
+                        </tr>
+                        <tr class="row-highlight">
+                            <td>DiffuDINO (Ours)</td>
+                            <td>R101</td>
+                            <td>12</td>
+                            <td>51.2 <span class="improvement">(+1.2)</span></td>
+                            <td>68.6</td>
+                            <td>55.8</td>
+                            <td>33.2</td>
+                            <td>55.6</td>
+                            <td>67.2</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- LVIS Tab -->
+        <div class="tab-content" id="tab-lvis">
+            <h3 class="table-title">LVIS val — Large Vocabulary Detection</h3>
+            <p class="table-desc">Results on LVIS validation set. Notable gains on rare categories (+4.5 AP<sub>r</sub> with R50).</p>
+            <div class="table-wrapper">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Model</th>
+                            <th>Backbone</th>
+                            <th>AP</th>
+                            <th>AP₅₀</th>
+                            <th>AP<sub>r</sub></th>
+                            <th>AP<sub>c</sub></th>
+                            <th>AP<sub>f</sub></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>DINO</td>
+                            <td>R50</td>
+                            <td>26.5</td>
+                            <td>35.9</td>
+                            <td>9.2</td>
+                            <td>24.6</td>
+                            <td>36.2</td>
+                        </tr>
+                        <tr class="row-highlight">
+                            <td>DiffuDINO (Ours)</td>
+                            <td>R50</td>
+                            <td>28.9 <span class="improvement">(+2.4)</span></td>
+                            <td>38.5</td>
+                            <td>13.7 <span class="improvement">(+4.5)</span></td>
+                            <td>27.6</td>
+                            <td>36.9</td>
+                        </tr>
+                        <tr>
+                            <td>DINO</td>
+                            <td>R101</td>
+                            <td>30.9</td>
+                            <td>40.4</td>
+                            <td>13.9</td>
+                            <td>29.7</td>
+                            <td>39.7</td>
+                        </tr>
+                        <tr class="row-highlight">
+                            <td>DiffuDINO (Ours)</td>
+                            <td>R101</td>
+                            <td>32.5 <span class="improvement">(+1.6)</span></td>
+                            <td>42.4</td>
+                            <td>13.5</td>
+                            <td>32.0</td>
+                            <td>41.5</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- V3Det Tab -->
+        <div class="tab-content" id="tab-v3det">
+            <h3 class="table-title">V3Det val — Vast Vocabulary Detection</h3>
+            <p class="table-desc">Results on V3Det with 13,204 categories. Massive +8.3 AP gain with Swin-B backbone.</p>
+            <div class="table-wrapper">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Model</th>
+                            <th>Backbone</th>
+                            <th>AP</th>
+                            <th>AP₅₀</th>
+                            <th>AP₇₅</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>DINO</td>
+                            <td>R50</td>
+                            <td>33.5</td>
+                            <td>37.7</td>
+                            <td>35.0</td>
+                        </tr>
+                        <tr class="row-highlight">
+                            <td>DiffuDINO (Ours)</td>
+                            <td>R50</td>
+                            <td>35.7 <span class="improvement">(+2.2)</span></td>
+                            <td>41.4</td>
+                            <td>37.7</td>
+                        </tr>
+                        <tr>
+                            <td>DINO</td>
+                            <td>Swin-B</td>
+                            <td>42.0</td>
+                            <td>46.8</td>
+                            <td>43.9</td>
+                        </tr>
+                        <tr class="row-highlight">
+                            <td>DiffuDINO (Ours)</td>
+                            <td>Swin-B</td>
+                            <td>50.3 <span class="improvement">(+8.3)</span></td>
+                            <td>56.6</td>
+                            <td>52.9</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</section>
+
+<div class="divider"></div>
+
+<!-- Qualitative Results -->
+<section class="section" id="qualitative">
+    <div class="section-inner">
+        <div class="section-header">
+            <div class="section-label">Visualization</div>
+            <h2 class="section-title">Qualitative Results</h2>
+            <p class="section-subtitle">Visual comparison of detection results showing improvements over baselines.</p>
+        </div>
+
+        <!-- Baseline Comparison -->
+        <div class="figure-container animate-on-scroll" style="margin-bottom: 2.5rem;">
+            <img src="figures/comparsion-withBaseline.png" alt="Comparison with Baselines">
+            <div class="figure-caption">
+                <h4><i class="fas fa-images" style="color: var(--primary);"></i> &nbsp;Baseline Comparison</h4>
+                <p>Side-by-side qualitative comparison on COCO 2017 val: Deformable DETR vs. DiffuDETR and DINO vs. DiffuDINO. Our diffusion-based models produce more accurate and complete detections, especially in crowded scenes with overlapping objects.</p>
+            </div>
+        </div>
+
+        <!-- Timestep Comparisons -->
+        <div class="gallery">
+            <div class="figure-container animate-on-scroll">
+                <img src="figures/coco-differentTimestep-comparsion.png" alt="COCO Timestep Comparison">
+                <div class="figure-caption">
+                    <h4><i class="fas fa-sliders" style="color: #2563EB;"></i> &nbsp;COCO — Decoder Steps</h4>
+                    <p>DiffuDINO results at different decoder evaluation steps ($t = 1, 3, 5, 10$) compared to DINO baseline and ground truth. Even $t = 1$ already surpasses DINO.</p>
+                </div>
+            </div>
+            <div class="figure-container animate-on-scroll">
+                <img src="figures/lvis-differentTimestep-comparsion.jpg" alt="LVIS Timestep Comparison">
+                <div class="figure-caption">
+                    <h4><i class="fas fa-sliders" style="color: #DB2777;"></i> &nbsp;LVIS — Decoder Steps</h4>
+                    <p>Same comparison on LVIS validation, showing improved handling of long-tail categories and fine-grained objects across varying decoder steps.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<div class="divider"></div>
+
+<!-- Ablation Studies -->
+<section class="section" id="ablation">
+    <div class="section-inner">
+        <div class="section-header">
+            <div class="section-label">Analysis</div>
+            <h2 class="section-title">Ablation Studies</h2>
+            <p class="section-subtitle">Detailed analysis of design choices on COCO 2017 validation.</p>
+        </div>
+
+        <div class="ablation-grid">
+            <!-- Noise Distribution -->
+            <div class="ablation-card animate-on-scroll">
+                <h4><i class="fas fa-chart-area" style="color: var(--primary);"></i> &nbsp;Noise Distribution</h4>
+                <div class="ablation-metric">mAP on COCO val2017</div>
+                <div class="bar-chart">
+                    <div class="bar-item">
+                        <div class="bar-label">Gaussian</div>
+                        <div class="bar-track">
+                            <div class="bar-fill purple best" style="width: 100%;">51.9</div>
+                        </div>
+                    </div>
+                    <div class="bar-item">
+                        <div class="bar-label">Sigmoid</div>
+                        <div class="bar-track">
+                            <div class="bar-fill blue" style="width: 97.1%;">50.4</div>
+                        </div>
+                    </div>
+                    <div class="bar-item">
+                        <div class="bar-label">Beta</div>
+                        <div class="bar-track">
+                            <div class="bar-fill blue" style="width: 95.4%;">49.5</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Noise Scheduler -->
+            <div class="ablation-card animate-on-scroll">
+                <h4><i class="fas fa-clock" style="color: var(--accent);"></i> &nbsp;Noise Scheduler</h4>
+                <div class="ablation-metric">mAP on COCO val2017</div>
+                <div class="bar-chart">
+                    <div class="bar-item">
+                        <div class="bar-label">Cosine</div>
+                        <div class="bar-track">
+                            <div class="bar-fill purple best" style="width: 100%;">51.9</div>
+                        </div>
+                    </div>
+                    <div class="bar-item">
+                        <div class="bar-label">Linear</div>
+                        <div class="bar-track">
+                            <div class="bar-fill blue" style="width: 99.4%;">51.6</div>
+                        </div>
+                    </div>
+                    <div class="bar-item">
+                        <div class="bar-label">Sqrt</div>
+                        <div class="bar-track">
+                            <div class="bar-fill blue" style="width: 99.0%;">51.4</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Decoder Evaluations -->
+            <div class="ablation-card animate-on-scroll">
+                <h4><i class="fas fa-repeat" style="color: #667eea;"></i> &nbsp;Decoder Evaluations</h4>
+                <div class="ablation-metric">mAP on COCO val2017</div>
+                <div class="bar-chart">
+                    <div class="bar-item">
+                        <div class="bar-label">1 eval</div>
+                        <div class="bar-track">
+                            <div class="bar-fill blue" style="width: 99.4%;">51.6</div>
+                        </div>
+                    </div>
+                    <div class="bar-item">
+                        <div class="bar-label">3 evals</div>
+                        <div class="bar-track">
+                            <div class="bar-fill purple best" style="width: 100%;">51.9</div>
+                        </div>
+                    </div>
+                    <div class="bar-item">
+                        <div class="bar-label">5 evals</div>
+                        <div class="bar-track">
+                            <div class="bar-fill blue" style="width: 99.8%;">51.8</div>
+                        </div>
+                    </div>
+                    <div class="bar-item">
+                        <div class="bar-label">10 evals</div>
+                        <div class="bar-track">
+                            <div class="bar-fill blue" style="width: 99.0%;">51.4</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Computational Cost -->
+            <div class="ablation-card animate-on-scroll">
+                <h4><i class="fas fa-microchip" style="color: #059669;"></i> &nbsp;Computational Cost</h4>
+                <div class="ablation-metric">FLOPs per decoder evaluation</div>
+                <div class="bar-chart">
+                    <div class="bar-item">
+                        <div class="bar-label">1 eval</div>
+                        <div class="bar-track">
+                            <div class="bar-fill green" style="width: 57.2%;">244.5G</div>
+                        </div>
+                    </div>
+                    <div class="bar-item">
+                        <div class="bar-label">3 evals</div>
+                        <div class="bar-track">
+                            <div class="bar-fill green best" style="width: 66.7%;">285.2G</div>
+                        </div>
+                    </div>
+                    <div class="bar-item">
+                        <div class="bar-label">5 evals</div>
+                        <div class="bar-track">
+                            <div class="bar-fill green" style="width: 76.2%;">326.0G</div>
+                        </div>
+                    </div>
+                    <div class="bar-item">
+                        <div class="bar-label">10 evals</div>
+                        <div class="bar-track">
+                            <div class="bar-fill green" style="width: 100%;">427.9G</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Robustness Note -->
+        <div class="abstract-card animate-on-scroll" style="margin-top: 3rem; text-align: center;">
+            <p style="font-size: 1rem;">
+                <i class="fas fa-shield-halved" style="color: var(--primary); font-size: 1.3rem;"></i>&nbsp;&nbsp;
+                <strong>Multi-Seed Robustness:</strong> Across 5 random seeds, standard deviation remains 
+                <span class="highlight">below ±0.2 AP</span> in all settings, demonstrating high stability of DiffuDINO 
+                regardless of initialization noise — even in dense and sparse scene subsets.
+            </p>
+        </div>
+    </div>
+</section>
+
+<div class="divider"></div>
+
+<!-- Citation -->
+<section class="section" id="citation">
+    <div class="section-inner">
+        <div class="section-header">
+            <div class="section-label">Reference</div>
+            <h2 class="section-title">Citation</h2>
+        </div>
+        <div class="bibtex-block animate-on-scroll">
+            <div class="bibtex-header">
+                <span><i class="fas fa-quote-left"></i> &nbsp;BibTeX</span>
+                <button class="copy-btn" onclick="copyBibtex()">
+                    <i class="fas fa-copy"></i> Copy
+                </button>
+            </div>
+            <div class="bibtex-code" id="bibtex-text">@inproceedings{nawar2026diffudetr,
+  title     = {DiffuDETR: Rethinking Detection Transformers with Denoising Diffusion Process},
+  author    = {Nawar, Youssef and Badran, Mohamed and Torki, Marwan},
+  booktitle = {International Conference on Learning Representations (ICLR)},
+  year      = {2026}
+}</div>
+        </div>
+    </div>
+</section>
+
+<!-- Footer -->
+<footer class="footer">
+    <p>
+        DiffuDETR &copy; 2026 &nbsp;·&nbsp; 
+        <a href="https://github.com/MBadran2000/DiffuDETR" target="_blank">GitHub</a> &nbsp;·&nbsp;
+        Template inspired by <a href="https://nerfies.github.io/" target="_blank">Nerfies</a>
+    </p>
+</footer>
+
+<!-- JavaScript -->
+<script>
+    // ====== NAVBAR SCROLL ======
+    const navbar = document.getElementById('navbar');
+    window.addEventListener('scroll', () => {
+        navbar.classList.toggle('scrolled', window.scrollY > 50);
+    });
+
+    // ====== SCROLL ANIMATIONS ======
+    const observerOptions = {
+        threshold: 0.1,
+        rootMargin: '0px 0px -50px 0px'
+    };
+
+    const observer = new IntersectionObserver((entries) => {
+        entries.forEach(entry => {
+            if (entry.isIntersecting) {
+                entry.target.classList.add('visible');
+            }
+        });
+    }, observerOptions);
+
+    document.querySelectorAll('.animate-on-scroll').forEach(el => {
+        observer.observe(el);
+    });
+
+    // ====== COUNTER ANIMATION ======
+    const counterObserver = new IntersectionObserver((entries) => {
+        entries.forEach(entry => {
+            if (entry.isIntersecting) {
+                const counter = entry.target;
+                const target = parseFloat(counter.dataset.target);
+                if (!target) return;
+                
+                const duration = 2000;
+                const start = performance.now();
+                
+                const animate = (currentTime) => {
+                    const elapsed = currentTime - start;
+                    const progress = Math.min(elapsed / duration, 1);
+                    
+                    // Ease out cubic
+                    const eased = 1 - Math.pow(1 - progress, 3);
+                    const current = (eased * target).toFixed(1);
+                    
+                    counter.textContent = current;
+                    
+                    if (progress < 1) {
+                        requestAnimationFrame(animate);
+                    }
+                };
+                
+                requestAnimationFrame(animate);
+                counterObserver.unobserve(counter);
+            }
+        });
+    }, { threshold: 0.5 });
+
+    document.querySelectorAll('.counter[data-target]').forEach(el => {
+        counterObserver.observe(el);
+    });
+
+    // ====== TABS ======
+    document.querySelectorAll('.tab-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const tabId = btn.dataset.tab;
+            
+            document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+            
+            btn.classList.add('active');
+            document.getElementById(`tab-${tabId}`).classList.add('active');
+        });
+    });
+
+    // ====== COPY BIBTEX ======
+    function copyBibtex() {
+        const text = document.getElementById('bibtex-text').textContent;
+        navigator.clipboard.writeText(text).then(() => {
+            const btn = document.querySelector('.copy-btn');
+            btn.innerHTML = '<i class="fas fa-check"></i> Copied!';
+            setTimeout(() => {
+                btn.innerHTML = '<i class="fas fa-copy"></i> Copy';
+            }, 2000);
+        });
+    }
+
+    // ====== SMOOTH SCROLL ======
+    document.querySelectorAll('a[href^="#"]').forEach(anchor => {
+        anchor.addEventListener('click', function(e) {
+            e.preventDefault();
+            const target = document.querySelector(this.getAttribute('href'));
+            if (target) {
+                target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }
+        });
+    });
+
+    // ====== ANIMATED BAR FILLS ON SCROLL ======
+    const barObserver = new IntersectionObserver((entries) => {
+        entries.forEach(entry => {
+            if (entry.isIntersecting) {
+                const bars = entry.target.querySelectorAll('.bar-fill');
+                bars.forEach((bar, i) => {
+                    const width = bar.style.width;
+                    bar.style.width = '0%';
+                    setTimeout(() => {
+                        bar.style.width = width;
+                    }, i * 150);
+                });
+                barObserver.unobserve(entry.target);
+            }
+        });
+    }, { threshold: 0.3 });
+
+    document.querySelectorAll('.ablation-card').forEach(card => {
+        barObserver.observe(card);
+    });
+</script>
+
+</body>
+</html>
