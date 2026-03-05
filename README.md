@@ -1,13 +1,9 @@
 <div align="center">
 <div align="center"> <img src="./docs/logo.png" width="50%"> </div>
 
-<a href="https://mbadran2000.github.io/DiffuDETR/">
-    <img src="https://img.shields.io/badge/🌐%20Project%20Page-0F766E?style=for-the-badge&logoColor=white" height="45">
-</a>
-
+[![Project Page](https://img.shields.io/badge/🌐%20Project%20Page-0F766E?style=for-the-badge&logoColor=white)](https://mbadran2000.github.io/DiffuDETR/)
 [![Paper](https://img.shields.io/badge/📄_Paper-ICLR_2026-4F46E5?style=for-the-badge)](https://iclr.cc/virtual/2026/poster/10007459)
 [![Hugging Face Weights](https://img.shields.io/badge/🤗_Weights-Hugging_Face-ffc107?style=for-the-badge)](https://huggingface.co/MBadran/DiffuDETR/tree/main/checkpoints)
-[![License](https://img.shields.io/badge/License-Apache_2.0-blue?style=for-the-badge)](https://github.com/MBadran2000/DiffuDETR/blob/main/LICENSE)
 
 
 # DiffuDETR: Rethinking Detection Transformers with Denoising Diffusion Process
