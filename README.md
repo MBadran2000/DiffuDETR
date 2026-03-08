@@ -178,17 +178,16 @@ conda activate diffudetr
 # 2. Install PyTorch
 pip install torch==2.3.1 torchvision==0.18.1 torchaudio==2.3.1 --index-url https://download.pytorch.org/whl/cu121
 
-# 3. Clone and install detrex
-git clone https://github.com/IDEA-Research/detrex.git
+# 3. Clone and install detrex (as a submodule)
+git submodule update --init --recursive
 cd detrex
-git submodule init
-git submodule update
 
 # 4. Install detectron2
 python -m pip install -e detectron2 --no-build-isolation
 
 # 5. Install detrex
 pip install -e . --no-build-isolation
+cd ..
 
 # 6. Fix setuptools compatibility
 pip uninstall setuptools -y
