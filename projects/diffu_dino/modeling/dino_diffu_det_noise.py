@@ -883,7 +883,7 @@ class DIFFUSION_DINO(nn.Module):
         num_gts = []
         new_targets_diffusion = []
         for targets_per_image in targets:
-            no_object_bbox , no_object_label = torch.tensor([0.5,0.5,0.5,0.5],device=self.device), torch.tensor([80],device= self.device)
+            no_object_bbox , no_object_label = torch.tensor([0.5,0.5,0.5,0.5],device=self.device), torch.tensor([self.num_classes],device= self.device)
             # no_object_bbox , no_object_label = torch.tensor([1,1,1,1],device=self.device), torch.tensor([80],device= self.device)
 
             h, w = targets_per_image.image_size
